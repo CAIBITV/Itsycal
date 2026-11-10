@@ -69,7 +69,9 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 
 @implementation EventCenter {                      // Accessed on:
     EKEventStore         *_store;
-    NSCalendar           *_cal; // user's calendar; see _nsCal in ViewController.m
+    NSCalendar           *_requestedCalendar;      // 主线程
+    NSCalendar           *_cal;                    // _queueWork
+    NSCalendar           *_publishedCalendar;      // _queueIsol
     NSMutableDictionary  *_eventsForDate;          // _queueWork
     NSDictionary         *_filteredEventsForDate;  // _queueIsol
     NSMutableIndexSet    *_previouslyFetchedDates; // _queueWork
@@ -113,7 +115,7 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
     
     self = [super init];
     if (self) {
-        _cal = calendar;
+        _requestedCalendar = _cal = calendar;
         _delegate = delegate;
         _sourcesAndCalendars = [NSArray new];
         _eventsForDate  = [NSMutableDictionary new];
@@ -241,16 +243,18 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 - (NSDictionary *)filteredEventsForDate {
     //os_log(OS_LOG_DEFAULT, "%s", __FUNCTION__);
     __block NSDictionary *filteredEventsForDate;
+    NSCalendar *calendar = _requestedCalendar;
     dispatch_sync(_queueIsol, ^{
-        filteredEventsForDate = [self->_filteredEventsForDate copy];
+        filteredEventsForDate = self->_publishedCalendar == calendar ? [self->_filteredEventsForDate copy] : @{};
     });
     return filteredEventsForDate;
 }
 
 - (NSArray<EventInfo *> *)remindersDueBeforeDate:(NSDate *)date {
     __block NSArray<EventInfo *> *candidates;
+    NSCalendar *calendar = _requestedCalendar;
     dispatch_sync(_queueIsol, ^{
-        candidates = self->_filteredOverdueCandidates;
+        candidates = self->_publishedCalendar == calendar ? self->_filteredOverdueCandidates : @[];
     });
     // Already sorted. See -_filterEvents.
     NSMutableArray<EventInfo *> *reminders = [NSMutableArray new];
@@ -273,6 +277,11 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
     [self _fetchClearingCache:YES];
 }
 
+- (void)refetchAllWithCalendar:(NSCalendar *)calendar {
+    _requestedCalendar = calendar;
+    [self refetchAll];
+}
+
 // Read the dates to fetch from the delegate, here on the main thread,
 // then fetch on _queueWork. If clearCache, refetch the calendars and
 // clear the cache first.
@@ -280,8 +289,10 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
     MoDate startMoDate = [self.delegate fetchStartDate];
     MoDate endMoDate   = [self.delegate fetchEndDate];
     MoDate today       = [self.delegate todayDate];
+    NSCalendar *calendar = _requestedCalendar;
     dispatch_async(_queueWork, ^{
         @autoreleasepool {
+            self->_cal = calendar;
             if (clearCache) {
                 [self _fetchSourcesAndCalendars];
             }
@@ -497,7 +508,7 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 - (NSArray *)_undoFingerprintForEvent:(EKEvent *)event {
     id start, end;
     if (event.isAllDay) {
-        start = [_cal startOfDayForDate:event.startDate];
+        start = @(MakeDateWithNSDate(event.startDate, [NSCalendar currentCalendar]).julian);
         end   = NSNull.null;
     }
     else {
@@ -624,10 +635,15 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 
     NSMutableDictionary *eventsForDate = [NSMutableDictionary new];
     NSArray *cals = [self _validCalendarsForEntityMask:EKEntityMaskEvent];
+    NSCalendar *systemCalendar = [NSCalendar currentCalendar];
     [notYetFetchedDates enumerateRangesUsingBlock:^(NSRange run, BOOL *stop) {
-        NSDate *start = MakeNSDateWithDate(MakeGregorian(run.location),   self->_cal);
-        NSDate *end   = MakeNSDateWithDate(MakeGregorian(NSMaxRange(run)), self->_cal);
-        [self _addEventsWithStartDate:start endDate:end calendars:cals toEventsForDate:eventsForDate];
+        MoDate firstDay = MakeGregorian(run.location);
+        MoDate endDay = MakeGregorian(NSMaxRange(run));
+        NSDate *start = MakeNSDateWithDate(firstDay, self->_cal);
+        NSDate *end = MakeNSDateWithDate(endDay, self->_cal);
+        [self _addEventsWithStartDate:start endDate:end systemStartDate:MakeNSDateWithDate(firstDay, systemCalendar)
+                        systemEndDate:MakeNSDateWithDate(endDay, systemCalendar) systemCalendar:systemCalendar
+                            calendars:cals toEventsForDate:eventsForDate];
     }];
     [self _addRemindersForDates:notYetFetchedDates toEventsForDate:eventsForDate];
 
@@ -644,9 +660,15 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 }
 
 // Add the events in [startDate, endDate) from cals to eventsForDate.
-- (void)_addEventsWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate calendars:(NSArray *)cals toEventsForDate:(NSMutableDictionary *)eventsForDate
+- (void)_addEventsWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate
+               systemStartDate:(NSDate *)systemStartDate systemEndDate:(NSDate *)systemEndDate
+                systemCalendar:(NSCalendar *)systemCalendar calendars:(NSArray *)cals
+                toEventsForDate:(NSMutableDictionary *)eventsForDate
 {
-    NSPredicate *predicate = [_store predicateForEventsWithStartDate:startDate endDate:endDate calendars:cals];
+    // EventKit 按系统时区返回全天事件。查询覆盖两个时区的日期边界。
+    NSDate *queryStart = [startDate earlierDate:systemStartDate];
+    NSDate *queryEnd = [endDate laterDate:systemEndDate];
+    NSPredicate *predicate = [_store predicateForEventsWithStartDate:queryStart endDate:queryEnd calendars:cals];
     NSArray *events = [_store eventsMatchingPredicate:predicate];
     
     // Does EKEvent still respond to the private 'participationStatus'
@@ -675,8 +697,20 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
         
         // Iterate through the days this event spans. We only care about
         // days for this event that are between startDate and endDate.
-        NSDate *date  = [event.startDate laterDate:startDate];
-        NSDate *final = [event.endDate earlierDate:endDate];
+        NSDate *eventStart = event.startDate;
+        NSDate *eventEnd = event.endDate;
+        if (event.isAllDay && ![_cal.timeZone isEqualToTimeZone:systemCalendar.timeZone]) {
+            MoDate firstDay = MakeDateWithNSDate(eventStart, systemCalendar);
+            MoDate endDay = MakeDateWithNSDate(eventEnd, systemCalendar);
+            // EventKit 可能把全天事件结束时间表示为当天最后一秒或次日零点。
+            if (![eventEnd isEqualToDate:[systemCalendar startOfDayForDate:eventEnd]]) {
+                endDay = AddDaysToDate(1, endDay);
+            }
+            eventStart = MakeNSDateWithDate(firstDay, _cal);
+            eventEnd = MakeNSDateWithDate(endDay, _cal);
+        }
+        NSDate *date = [eventStart laterDate:startDate];
+        NSDate *final = [eventEnd earlierDate:endDate];
         date  = [_cal startOfDayForDate:date];
         while ([date compare:final] == NSOrderedAscending) {
             
@@ -688,16 +722,16 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
             info.event       = event;
             info.date        = date;
             //   isStartDate = (it starts on `date` AND ends not before `nextDate`)
-            info.isStartDate = ([_cal isDate:date inSameDayAsDate:event.startDate] &&
-                                [event.endDate compare:nextDate] != NSOrderedAscending);
+            info.isStartDate = ([_cal isDate:date inSameDayAsDate:eventStart] &&
+                                [eventEnd compare:nextDate] != NSOrderedAscending);
             //   isEndDate   = (it ends on `date` AND starts before `date`)
-            info.isEndDate   = ([_cal isDate:date inSameDayAsDate:event.endDate] &&
-                                [event.startDate compare:date] == NSOrderedAscending);
+            info.isEndDate   = ([_cal isDate:date inSameDayAsDate:eventEnd] &&
+                                [eventStart compare:date] == NSOrderedAscending);
             //   isAllDay    = (it's a real all-day event OR
             //                  (it starts before `date` AND ends not before `nextDate`))
             info.isAllDay    = (event.allDay ||
-                                ([event.startDate compare:date] == NSOrderedAscending &&
-                                 [event.endDate compare:nextDate] != NSOrderedAscending));
+                                ([eventStart compare:date] == NSOrderedAscending &&
+                                 [eventEnd compare:nextDate] != NSOrderedAscending));
             // ...and add it to the array in eventsForDate.
             if (eventsForDate[date] == nil) {
                 eventsForDate[date] = [NSMutableArray new];
@@ -719,8 +753,10 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
 {
     // Expand repeating reminders once over the span of dates, then keep
     // the occurrences that fall on one of them.
-    NSDate *spanStart = MakeNSDateWithDate(MakeGregorian(dates.firstIndex),    _cal);
-    NSDate *spanEnd   = MakeNSDateWithDate(MakeGregorian(dates.lastIndex + 1), _cal);
+    MoDate firstDay = MakeGregorian(dates.firstIndex);
+    MoDate endDay = MakeGregorian(dates.lastIndex + 1);
+    NSDate *spanStart = MakeNSDateWithDate(firstDay, _cal);
+    NSDate *spanEnd = MakeNSDateWithDate(endDay, _cal);
     NSSet<NSString *> *lingeringIDs;
     NSArray<EKReminder *> *reminders = [self _fetchRemindersReturningLingeringIDs:&lingeringIDs];
     NSMutableArray<EventInfo *> *overdueCandidates = [NSMutableArray new];
@@ -730,8 +766,10 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
         NSCalendar *dueCalendar;
         NSDate *dueDate = DueDateForReminder(reminder, &hasTime, &dueCalendar);
         if (dueDate == nil) continue;
+        BOOL rebase = !hasTime && ![dueCalendar.timeZone isEqualToTimeZone:_cal.timeZone];
         if (!reminder.isCompleted || [lingeringIDs containsObject:reminder.calendarItemIdentifier]) {
-            NSDate *day = [_cal startOfDayForDate:dueDate];
+            NSDate *day = rebase ? MakeNSDateWithDate(MakeDateWithNSDate(dueDate, dueCalendar), _cal)
+                                 : [_cal startOfDayForDate:dueDate];
             EventInfo *info = [EventInfo new];
             info.reminder = reminder;
             info.date     = day;
@@ -742,11 +780,15 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
         }
         NSMutableArray<NSDate *> *occurrences = [NSMutableArray arrayWithObject:dueDate];
         if (!reminder.isCompleted && reminder.hasRecurrenceRules) {
-            NSArray *later = RecurrenceDates(reminder.recurrenceRules.firstObject, dueDate, dueCalendar, spanStart, spanEnd);
+            // 在原时区展开，确保无时间提醒的重复截止日期仍按原规则判断。
+            NSDate *rangeStart = rebase ? MakeNSDateWithDate(firstDay, dueCalendar) : spanStart;
+            NSDate *rangeEnd = rebase ? MakeNSDateWithDate(endDay, dueCalendar) : spanEnd;
+            NSArray *later = RecurrenceDates(reminder.recurrenceRules.firstObject, dueDate, dueCalendar, rangeStart, rangeEnd);
             if (later) [occurrences addObjectsFromArray:later];
         }
         for (NSDate *occurrence in occurrences) {
-            NSDate *date = [_cal startOfDayForDate:occurrence];
+            NSDate *date = rebase ? MakeNSDateWithDate(MakeDateWithNSDate(occurrence, dueCalendar), _cal)
+                                  : [_cal startOfDayForDate:occurrence];
             if (![dates containsIndex:MakeDateWithNSDate(date, _cal).julian]) {
                 continue;
             }
@@ -1003,11 +1045,13 @@ static EventMaker EventMakerForEvent(EKEvent *event); // see below
     // Notify the delegate from inside the _queueIsol block so the
     // write to _filteredEventsForDate is visible before the delegate
     // reads it back via -filteredEventsForDate.
+    NSCalendar *calendar = _cal;
     dispatch_async(_queueIsol, ^{
+        self->_publishedCalendar = calendar;
         self->_filteredEventsForDate = [filteredEventsForDate copy];
         self->_filteredOverdueCandidates = [filteredOverdueCandidates copy];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self.delegate eventCenterEventsChanged];
+            if (self->_requestedCalendar == calendar) [self.delegate eventCenterEventsChanged];
         });
     });
 }

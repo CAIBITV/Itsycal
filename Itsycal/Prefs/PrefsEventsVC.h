@@ -11,4 +11,6 @@
 
 @property (nonatomic, weak) EventCenter *ec;
 
+- (void)reloadCalendars;
+
 @end

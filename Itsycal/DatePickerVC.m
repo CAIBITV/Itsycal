@@ -11,7 +11,7 @@
 {
     NSDatePicker *_picker;
     __weak MoCalendar *_moCal;
-    __weak NSCalendar *_nsCal;
+    NSCalendar *_nsCal;
 }
 
 - (instancetype)initWithMoCal:(MoCalendar *)moCal nsCal:(NSCalendar *)nsCal
@@ -35,6 +35,7 @@
     _picker.bordered = NO;
     _picker.drawsBackground = NO;
     _picker.datePickerElements = NSDatePickerElementFlagYearMonthDay;
+    _picker.timeZone = _nsCal.timeZone;
     _picker.dateValue = MakeNSDateWithDate(_moCal.selectedDate, _nsCal);
     [v addSubview:_picker];
 

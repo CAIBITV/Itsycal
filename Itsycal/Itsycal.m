@@ -21,6 +21,7 @@ NSString * const kShowDayOfWeekInIcon = @"ShowDayOfWeekInIcon";
 NSString * const kShowMeetingIndicator = @"ShowMeetingIndicator";
 NSString * const kAllowOutsideApplicationsFolder = @"AllowOutsideApplicationsFolder";
 NSString * const kClockFormat = @"ClockFormat";
+NSString * const kTimeZoneIdentifier = @"TimeZoneIdentifier";
 NSString * const kHideIcon = @"HideIcon";
 NSString * const kShowLocation = @"ShowLocation";
 NSString * const kShowEventDots = @"kShowEventDots";
@@ -38,6 +39,20 @@ NSString * const kDoNotCheckLoginItemStatus = @"DoNotCheckLoginItemStatus";
 NSString * const kWindowPosition = @"WindowPosition";
 NSString * const kTimerEndDate = @"TimerEndDate";
 NSString * const kTimerRecentMinutes = @"TimerRecentMinutes";
+
+NSCalendar *ItsycalCalendar(void)
+{
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSString *identifier = [NSUserDefaults.standardUserDefaults stringForKey:kTimeZoneIdentifier];
+    NSTimeZone *timeZone = identifier.length > 0 ? [NSTimeZone timeZoneWithName:identifier] : nil;
+    if (timeZone) calendar.timeZone = timeZone;
+    return calendar;
+}
+
+BOOL ItsycalHasUpdateFeed(void)
+{
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"SUFeedURL"] != nil;
+}
 
 @implementation NSDate (HasNoEvents)
 

@@ -24,6 +24,7 @@ extern NSString * const kShowDayOfWeekInIcon;
 extern NSString * const kShowMeetingIndicator;
 extern NSString * const kAllowOutsideApplicationsFolder;
 extern NSString * const kClockFormat;
+extern NSString * const kTimeZoneIdentifier;
 extern NSString * const kHideIcon;
 extern NSString * const kShowLocation;
 extern NSString * const kShowEventDots;
@@ -41,6 +42,9 @@ extern NSString * const kDoNotCheckLoginItemStatus;
 extern NSString * const kWindowPosition;
 extern NSString * const kTimerEndDate;
 extern NSString * const kTimerRecentMinutes;
+
+NSCalendar *ItsycalCalendar(void);
+BOOL ItsycalHasUpdateFeed(void);
 
 typedef NS_ENUM(NSInteger, WindowPosition) {
     WindowPositionBelowMenuBarIcon = 0,

@@ -40,7 +40,7 @@ NSLocale *DateIntervalFormatterLocale(void);
  * (and time) if start and end are the same, as for a reminder.
  * Call on the main thread.
  */
-NSString *DateRangeString(NSDate *start, NSDate *end, BOOL allDay);
+NSString *DateRangeString(NSDate *start, NSDate *end, BOOL allDay, NSTimeZone *timeZone);
 
 /**
  * The date at which a virtual meeting becomes joinable: 15 minutes prior

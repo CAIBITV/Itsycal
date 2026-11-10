@@ -451,7 +451,7 @@ static NSImage *CalendarDotImage(NSColor *color)
     _meetingIcon.symbolConfiguration = iconSize;
 }
 
-- (void)populateWithEventInfo:(EventInfo *)info
+- (void)populateWithEventInfo:(EventInfo *)info calendar:(NSCalendar *)calendar
 {
     [self updateSizes];
 
@@ -496,14 +496,13 @@ static NSImage *CalendarDotImage(NSColor *color)
     // Hide delete button IF event doesn't allow modification.
     _btnDelete.hidden = !info.event.calendar.allowsContentModifications;
 
-    duration = DateRangeString(startDate, endDate, isAllDay);
+    NSTimeZone *timeZone = info.event.isAllDay ? [NSTimeZone localTimeZone] : calendar.timeZone;
+    duration = DateRangeString(startDate, endDate, isAllDay, timeZone);
     // If the event is not All-day and the start and end dates are
     // different, put them on different lines.
     // The – is U+2013 (en-dash) and the space is U+2009 (thin space)
     if (!isAllDay) {
-        NSDateComponents *start = [NSCalendar.currentCalendar components:NSCalendarUnitMonth | NSCalendarUnitDay fromDate:startDate];
-        NSDateComponents *end = [NSCalendar.currentCalendar components:NSCalendarUnitMonth | NSCalendarUnitDay fromDate:endDate];
-        if (start.day != end.day || start.month != end.month) {
+        if (![calendar isDate:startDate inSameDayAsDate:endDate]) {
             duration = [duration stringByReplacingOccurrencesOfString:@"– " withString:@"–\n"];
         }
     }
@@ -540,7 +539,7 @@ static NSImage *CalendarDotImage(NSColor *color)
         if (rule.recurrenceEnd) {
             if (rule.recurrenceEnd.endDate) {
                 NSDate *repeatEnd = rule.recurrenceEnd.endDate;
-                NSString *endRecurrence = [NSString stringWithFormat:@"\n%@ %@", NSLocalizedString(@"End Repeat:", nil), DateRangeString(repeatEnd, repeatEnd, YES)];
+                NSString *endRecurrence = [NSString stringWithFormat:@"\n%@ %@", NSLocalizedString(@"End Repeat:", nil), DateRangeString(repeatEnd, repeatEnd, YES, timeZone)];
                 recurrence = [recurrence stringByAppendingString:endRecurrence];
             }
             if (rule.recurrenceEnd.occurrenceCount) {

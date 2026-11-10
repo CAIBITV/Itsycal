@@ -11,7 +11,7 @@
 // Called when the user clicks the delete button or presses delete.
 // The button only shows for an event whose calendar can be changed.
 @property (nonatomic, copy) void (^deleteHandler)(void);
-- (void)populateWithEventInfo:(EventInfo *)info;
+- (void)populateWithEventInfo:(EventInfo *)info calendar:(NSCalendar *)calendar;
 // Call once the popover is shown at its final size.
 - (void)popoverDidShow;
 - (NSSize)size;

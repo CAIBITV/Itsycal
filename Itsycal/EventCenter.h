@@ -86,6 +86,7 @@
 
 // Clear cached events and refetch.
 - (void)refetchAll;
+- (void)refetchAllWithCalendar:(NSCalendar *)calendar;
 
 // Refresh event store.
 - (void)refresh;

@@ -65,14 +65,14 @@ NSLocale *DateIntervalFormatterLocale(void)
     return formatterLocale;
 }
 
-NSString *DateRangeString(NSDate *start, NSDate *end, BOOL allDay)
+NSString *DateRangeString(NSDate *start, NSDate *end, BOOL allDay, NSTimeZone *timeZone)
 {
     static NSDateIntervalFormatter *formatter = nil;
     if (formatter == nil) {
         formatter = [NSDateIntervalFormatter new];
         formatter.dateStyle = NSDateIntervalFormatterMediumStyle;
     }
-    formatter.timeZone = [NSTimeZone localTimeZone];
+    formatter.timeZone = timeZone;
     formatter.locale = DateIntervalFormatterLocale();
     formatter.timeStyle = allDay
         ? NSDateIntervalFormatterNoStyle

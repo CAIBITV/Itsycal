@@ -279,7 +279,8 @@ static const CGFloat kReminderFillGap = 1;
     if (cell == nil) return nil; // should not happen
 
     EventInfo *info = cell.eventInfo;
-    NSString *duration = DateRangeString(info.startDate, info.endDate, info.isRealAllDay);
+    NSString *duration = DateRangeString(info.startDate, info.endDate, info.isRealAllDay,
+                                        info.event.isAllDay ? [NSTimeZone localTimeZone] : self.nsCal.timeZone);
     NSString *eventText = [NSString stringWithFormat:@"%@\n%@\n%@%@",
                            cell.titleTextField.stringValue,
                            duration,
@@ -332,7 +333,7 @@ static const CGFloat kReminderFillGap = 1;
     if (!cell) return; // should never happen
     
     AgendaPopoverVC *popoverVC = (AgendaPopoverVC *)_popover.contentViewController;
-    [popoverVC populateWithEventInfo:cell.eventInfo];
+    [popoverVC populateWithEventInfo:cell.eventInfo calendar:self.nsCal];
     // Keep the event itself, not its row. self.events can be replaced
     // while the popover is open. See -deleteEventInfo:.
     _popoverEventInfo = cell.eventInfo;
@@ -574,7 +575,11 @@ static const CGFloat kReminderFillGap = 1;
     // nothing if it's no longer due on the date the user saw: checking
     // off a repeating reminder moves it, still incomplete, to its next
     // due date, so a quick second click would check that one off too.
-    if (reminder.isCompleted == completed || !ReminderIsDue(reminder, info.dueDate)) return;
+    NSDate *dueDate = info.dueDate;
+    if (info.isAllDay) {
+        dueDate = MakeNSDateWithDate(MakeDateWithNSDate(dueDate, self.nsCal), [NSCalendar currentCalendar]);
+    }
+    if (reminder.isCompleted == completed || !ReminderIsDue(reminder, dueDate)) return;
     if (self.delegate && [self.delegate respondsToSelector:@selector(agendaWantsToSetReminder:completed:)]) {
         [self.delegate agendaWantsToSetReminder:reminder completed:completed];
     }
@@ -589,7 +594,7 @@ static const CGFloat kReminderFillGap = 1;
     if (dateFormatter == nil) {
         dateFormatter = [NSDateFormatter new];
     }
-    dateFormatter.timeZone = [NSTimeZone localTimeZone];
+    dateFormatter.timeZone = self.nsCal.timeZone;
     [dateFormatter setLocalizedDateFormatFromTemplate:@"dMMM"];
     return [dateFormatter stringFromDate:date];
 }
@@ -600,7 +605,7 @@ static const CGFloat kReminderFillGap = 1;
     if (dateFormatter == nil) {
         dateFormatter = [NSDateFormatter new];
     }
-    dateFormatter.timeZone = [NSTimeZone localTimeZone];
+    dateFormatter.timeZone = self.nsCal.timeZone;
     if ([self.nsCal isDateInToday:date] || [self.nsCal isDateInTomorrow:date]) {
         dateFormatter.doesRelativeDateFormatting = YES;
         dateFormatter.dateStyle = NSDateFormatterMediumStyle;
@@ -619,7 +624,7 @@ static const CGFloat kReminderFillGap = 1;
 {
     static NSDateFormatter *formatter = nil;
     if (formatter == nil) formatter = [NSDateFormatter new];
-    formatter.timeZone = [NSTimeZone localTimeZone];
+    formatter.timeZone = self.nsCal.timeZone;
     formatter.locale = NSLocale.currentLocale;
     BOOL thisYear = [self.nsCal isDate:info.dueDate equalToDate:NSDate.date toUnitGranularity:NSCalendarUnitYear];
     NSString *template = thisYear ? @"MMMd" : @"yMMMd";
@@ -671,9 +676,9 @@ static const CGFloat kReminderFillGap = 1;
     NSString *title = @"";
     NSString *location = @"";
     NSString *duration = @"";
-    timeFormatter.timeZone  = [NSTimeZone localTimeZone];
+    timeFormatter.timeZone  = self.nsCal.timeZone;
     intervalFormatter.timeZone = nil; // Force tz update on macOS 10.13
-    intervalFormatter.timeZone  = [NSTimeZone localTimeZone];
+    intervalFormatter.timeZone  = self.nsCal.timeZone;
     // Needed to pick up 12/24 hr time system preference change:
     intervalFormatter.locale = DateIntervalFormatterLocale();
     

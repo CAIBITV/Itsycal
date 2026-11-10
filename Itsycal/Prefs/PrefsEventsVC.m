@@ -40,6 +40,7 @@ static NSString * const kButtonCellId = @"ButtonCell";
     NSButton *_showCompletedReminders;
     NSButton *_showOverdueReminders;
     NSArray *_sourcesAndCalendars;
+    BOOL _calendarAccessGranted;
     EKAuthorizationStatus _remindersStatus;
 }
 
@@ -84,6 +85,10 @@ static NSString * const kButtonCellId = @"ButtonCell";
     tvContainer.borderType = NSLineBorder;
     [v addSubview:tvContainer];
 
+    NSButton *addHolidays = [NSButton buttonWithTitle:NSLocalizedString(@"Add Holiday Calendar…", @"Events preferences")
+                                              target:self action:@selector(addHolidayCalendar:)];
+    [v addSubview:addHolidays];
+
     // Agenda days label
     _agendaDaysLabel = [NSTextField labelWithString:NSLocalizedString(@"Show:", @"Label for how many days the event list shows")];
     [v addSubview:_agendaDaysLabel];
@@ -109,10 +114,11 @@ static NSString * const kButtonCellId = @"ButtonCell";
     _showCompletedReminders = chkbx(NSLocalizedString(@"Show completed reminders", @""));
     _showOverdueReminders = chkbx(NSLocalizedString(@"Show overdue reminders at the top", @"Settings checkbox for the agenda's Overdue section"));
 
-    MoVFLHelper *vfl = [[MoVFLHelper alloc] initWithSuperview:v metrics:@{@"m": @20} views:NSDictionaryOfVariableBindings(eventListLabel, separator, tvContainer, _agendaDaysLabel, _agendaDaysPopup, _showLocation, _showDaysWithoutEvents, _showCompletedReminders, _showOverdueReminders)];
-    [vfl :@"V:|-m-[tvContainer(170)]-m-[eventListLabel]-10-[_agendaDaysPopup]-m-[_showLocation]-[_showDaysWithoutEvents]-[_showCompletedReminders]-[_showOverdueReminders]-m-|"];
+    MoVFLHelper *vfl = [[MoVFLHelper alloc] initWithSuperview:v metrics:@{@"m": @20} views:NSDictionaryOfVariableBindings(eventListLabel, separator, tvContainer, addHolidays, _agendaDaysLabel, _agendaDaysPopup, _showLocation, _showDaysWithoutEvents, _showCompletedReminders, _showOverdueReminders)];
+    [vfl :@"V:|-m-[tvContainer(170)]-8-[addHolidays]-m-[eventListLabel]-10-[_agendaDaysPopup]-m-[_showLocation]-[_showDaysWithoutEvents]-[_showCompletedReminders]-[_showOverdueReminders]-m-|"];
     [vfl :@"H:|-m-[eventListLabel]-[separator]-m-|" :NSLayoutFormatAlignAllCenterY];
     [vfl :@"H:|-m-[tvContainer]-m-|"];
+    [vfl :@"H:|-m-[addHolidays]-(>=m)-|"];
     [vfl :@"H:|-m-[_agendaDaysLabel]-[_agendaDaysPopup]-(>=m)-|" :NSLayoutFormatAlignAllFirstBaseline];
     [vfl :@"H:|-m-[_showLocation]-(>=m)-|"];
     [vfl :@"H:|-m-[_showDaysWithoutEvents]-(>=m)-|"];
@@ -141,9 +147,21 @@ static NSString * const kButtonCellId = @"ButtonCell";
 {
     [super viewWillAppear];
 
-    _sourcesAndCalendars = [self.ec sourcesAndCalendars];
-    _remindersStatus = self.ec.remindersAuthorizationStatus;
+    [self reloadCalendars];
+}
+
+- (void)reloadCalendars
+{
+    NSArray *calendars = [self.ec sourcesAndCalendars];
+    BOOL calendarAccessGranted = self.ec.calendarAccessGranted;
+    EKAuthorizationStatus remindersStatus = self.ec.remindersAuthorizationStatus;
+    if ([calendars isEqualToArray:_sourcesAndCalendars] &&
+        calendarAccessGranted == _calendarAccessGranted && remindersStatus == _remindersStatus) return;
+    _sourcesAndCalendars = calendars;
+    _calendarAccessGranted = calendarAccessGranted;
+    _remindersStatus = remindersStatus;
     [self updateControlsForAccess];
+    if (_calendarsTV.window && NSWidth(_calendarsTV.frame) > 8) [_calendarsTV reloadData];
 }
 
 - (void)updateControlsForAccess
@@ -151,7 +169,7 @@ static NSString * const kButtonCellId = @"ButtonCell";
     // The event list shows events and reminders, so its options apply
     // if the user granted either kind of access.
     BOOL remindersGranted = _remindersStatus == EKAuthorizationStatusFullAccess;
-    BOOL listShowsSomething = self.ec.calendarAccessGranted || remindersGranted;
+    BOOL listShowsSomething = _calendarAccessGranted || remindersGranted;
     _agendaDaysLabel.textColor = listShowsSomething ? NSColor.labelColor : NSColor.disabledControlTextColor;
     _agendaDaysPopup.enabled = listShowsSomething;
     _showLocation.enabled = listShowsSomething;
@@ -173,6 +191,30 @@ static NSString * const kButtonCellId = @"ButtonCell";
 
 #pragma mark -
 #pragma mark Calendar
+
+- (void)addHolidayCalendar:(NSButton *)sender
+{
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = NSLocalizedString(@"Add a holiday calendar", @"Holiday calendar instructions");
+    NSString *instructions = NSLocalizedString(@"In Calendar, choose File › New Holiday Calendar and select a country or region.", @"Holiday calendar instructions");
+    if ([ItsycalCalendar().timeZone.name isEqualToString:@"Asia/Shanghai"]) {
+        instructions = [instructions stringByAppendingFormat:@" %@", NSLocalizedString(@"For Shanghai, choose China mainland.", @"Holiday calendar instructions")];
+    }
+    NSString *selectInItsycal = NSLocalizedString(@"Then select the new calendar in Itsycal’s Events settings.", @"Holiday calendar instructions");
+    alert.informativeText = [NSString stringWithFormat:@"%@\n\n%@", instructions, selectInItsycal];
+    [alert addButtonWithTitle:NSLocalizedString(@"Open Calendar", @"Holiday calendar instructions")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"")];
+    [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        NSWorkspace *workspace = NSWorkspace.sharedWorkspace;
+        NSURL *url = [workspace URLForApplicationWithBundleIdentifier:@"com.apple.iCal"];
+        if (!url || ![workspace openURL:url]) {
+            NSAlert *error = [NSAlert new];
+            error.messageText = NSLocalizedString(@"The Calendar application could not be found.", @"");
+            [error beginSheetModalForWindow:self.view.window completionHandler:nil];
+        }
+    }];
+}
 
 - (void)calendarClicked:(NSButton *)checkbox
 {
@@ -197,7 +239,7 @@ static NSString * const kButtonCellId = @"ButtonCell";
 // calendar access, so these rows are there either way.
 - (NSInteger)calendarsDeniedRowCount
 {
-    return self.ec.calendarAccessGranted ? 0 : 1;
+    return _calendarAccessGranted ? 0 : 1;
 }
 
 - (BOOL)isCalendarsDeniedRow:(NSInteger)row
@@ -238,10 +280,7 @@ static NSString * const kButtonCellId = @"ButtonCell";
 - (void)showRemindersClicked:(id)sender
 {
     [self.ec requestRemindersAccessWithCompletion:^{
-        self->_remindersStatus = self.ec.remindersAuthorizationStatus;
-        [self updateControlsForAccess];
-        self->_sourcesAndCalendars = [self.ec sourcesAndCalendars];
-        [self->_calendarsTV reloadData];
+        [self reloadCalendars];
         // Show the reminder lists (or the denied message) at the end.
         [self->_calendarsTV scrollRowToVisible:self->_calendarsTV.numberOfRows - 1];
     }];

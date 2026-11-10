@@ -192,6 +192,15 @@ Please quit Itsycal, move it to the Applications folder, and relaunch." = "必�
 "Unpin Itsycal" = "取消固定 Itsycal";
 "Use colored dots" = "使用彩色圆点";
 "Wednesday" = "星期三";
+"Time zone:" = "时区：";
+"Follow System" = "跟随系统";
+"Search city or time zone" = "搜索城市或时区";
+"No matching time zones" = "没有匹配的时区";
+"Add Holiday Calendar…" = "添加节假日日历…";
+"Add a holiday calendar" = "添加节假日日历";
+"In Calendar, choose File › New Holiday Calendar and select a country or region." = "在系统「日历」中，选取「文件」›「新建节假日日历」，然后选择国家或地区。";
+"For Shanghai, choose China mainland." = "上海时区请选择「中国大陆」。";
+"Then select the new calendar in Itsycal’s Events settings." = "添加后，回到 Itsycal 的「事件」设置，勾选新日历。";
 "Window position:" = "窗口位置：";
 "You're deleting an event." = "你正在删除事件。";
 /* Spanning event ends */

@@ -89,7 +89,7 @@
     NSApp.mainMenu = [self mainMenu];
 
     // Create Sparkle's updater. This starts its update cycle.
-    [SUUpdater sharedUpdater];
+    if (ItsycalHasUpdateFeed()) [SUUpdater sharedUpdater];
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
@@ -182,7 +182,7 @@ static NSDate *DateFromURLDateString(NSString *string)
     }
     MoDate date = MakeDate(parts[0].integerValue, parts[1].integerValue - 1, parts[2].integerValue);
     if (!IsValidDate(date)) return nil;
-    return MakeNSDateWithDate(date, [NSCalendar autoupdatingCurrentCalendar]);
+    return MakeNSDateWithDate(date, ItsycalCalendar());
 }
 
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls

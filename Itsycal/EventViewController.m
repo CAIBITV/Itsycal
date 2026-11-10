@@ -363,6 +363,7 @@ const NSUInteger kAlertMaxCount = 3;
     _allDayCheckbox.state = NSControlStateValueOff;
     _startDate.datePickerElements = NSDatePickerElementFlagYearMonthDay | NSDatePickerElementFlagHourMinute;
     _endDate.datePickerElements   = NSDatePickerElementFlagYearMonthDay | NSDatePickerElementFlagHourMinute;
+    _startDate.timeZone = _endDate.timeZone = _repEndDate.timeZone = self.cal.timeZone;
     _startDate.dateValue = initialStart;
     _endDate.minDate     = initialStart; // !! Must set minDate before dateValue !!
     _endDate.dateValue   = initialEnd;
@@ -707,6 +708,14 @@ const NSUInteger kAlertMaxCount = 3;
     event.location  = [_location.stringValue stringByTrimmingCharactersInSet:whitespaceSet];
     event.URL       = [NSURL URLWithString:[_url.stringValue stringByTrimmingCharactersInSet:whitespaceSet]];
     event.allDay    = _allDayCheckbox.state == NSControlStateValueOn;
+    NSCalendar *systemCalendar = [NSCalendar currentCalendar];
+    // 全天事件以系统时区中的日期交给 EventKit，保持日期不变。
+    BOOL rebaseAllDay = event.isAllDay && ![self.cal.timeZone isEqualToTimeZone:systemCalendar.timeZone];
+    if (rebaseAllDay) {
+        startDate = MakeNSDateWithDate(MakeDateWithNSDate(startDate, self.cal), systemCalendar);
+        MoDate lastDay = MakeDateWithNSDate(endDate, self.cal);
+        endDate = [MakeNSDateWithDate(AddDaysToDate(1, lastDay), systemCalendar) dateByAddingTimeInterval:-1];
+    }
     event.startDate = startDate;
     event.endDate   = endDate;
     event.calendar  = calInfo.calendar;
@@ -719,7 +728,7 @@ const NSUInteger kAlertMaxCount = 3;
     // will be wrong and it won't be an allDay event anymore.
     // Alternatively, we could have set timeZone before setting allDay
     // because setting allDay == YES sets timeZone to nil.
-    event.timeZone  = event.isAllDay ? nil : [NSTimeZone localTimeZone];
+    event.timeZone  = event.isAllDay ? nil : self.cal.timeZone;
     
     // Recurrence rule.
     EKRecurrenceFrequency frequency;
@@ -749,7 +758,11 @@ const NSUInteger kAlertMaxCount = 3;
     EKRecurrenceEnd  *recurrenceEnd = nil;
     NSInteger repEndIndex = [_repEndPopup indexOfItem:_repEndPopup.selectedItem];
     if (repEndIndex != 0) {
-        recurrenceEnd = [EKRecurrenceEnd recurrenceEndWithEndDate:_repEndDate.dateValue];
+        NSDate *repeatEnd = _repEndDate.dateValue;
+        if (rebaseAllDay) {
+            repeatEnd = MakeNSDateWithDate(MakeDateWithNSDate(repeatEnd, self.cal), systemCalendar);
+        }
+        recurrenceEnd = [EKRecurrenceEnd recurrenceEndWithEndDate:repeatEnd];
     }
     EKRecurrenceRule *recurrence = nil;
     if (repIndex != 0) {

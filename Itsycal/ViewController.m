@@ -36,7 +36,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
 {
     return @[kShowEventDays, kMenuBarIconType, kShowMonthInIcon, kShowDayOfWeekInIcon,
               kShowDaysWithNoEventsInAgenda, kShowMeetingIndicator, kHideIcon,
-              kBaselineOffset, kClockFormat, kWindowPosition, kShowCompletedReminders,
+              kBaselineOffset, kClockFormat, kTimeZoneIdentifier, kWindowPosition, kShowCompletedReminders,
               kShowOverdueReminders];
 }
 
@@ -55,8 +55,8 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
 {
     EventCenter   *_ec;
     MoCalendar    *_moCal;
-    // The user's calendar (autoupdating, so it follows time zone changes),
-    // which can be Buddhist, Japanese, Hebrew, etc. Use it for start of
+    // 用户的日历及 Itsycal 当前使用的时区。
+    // Use it for start of
     // day, adding days, and hours/minutes/seconds, but don't read a year,
     // month or day from it: use MakeDateWithNSDate(), whose MoDates are
     // always Gregorian.
@@ -65,6 +65,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     id             _rightClickMonitor;
     MoButton      *_btnAdd, *_btnCal, *_btnOpt, *_btnPin;
     NSWindowController    *_prefsWC;
+    __weak PrefsEventsVC  *_prefsEventsVC;
     AgendaViewController  *_agendaVC;
     TooltipController     *_tooltips;
     TooltipViewController *_tooltipVC;
@@ -186,8 +187,8 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     _iconDateFormatter.calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierISO8601];
     _inactiveTime = 0;
 
-    // Calendar is 'autoupdating' so it handles timezone changes properly.
-    _nsCal = [NSCalendar autoupdatingCurrentCalendar];
+    _nsCal = ItsycalCalendar();
+    _iconDateFormatter.timeZone = _nsCal.timeZone;
     _agendaVC.nsCal = _nsCal;
     
     MoDate today = [self todayDate];
@@ -395,11 +396,12 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     // macOS 14.5, Calendar.app seems to remember the previous date it was set
     // to and automatically reverts to it after activation. By waiting, we
     // allow Calendar.app to revert and then we navigate properly to `date`.
+    MoDate day = MakeDateWithNSDate(date, _nsCal);
     [calendarApp activate]; // bring to foreground
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [calendarApp activate]; // bring to foreground
         if (dayView) [calendarApp switchViewTo:SBCalendarCALViewTypeForScriptingDayView];
-        [calendarApp viewCalendarAt:date];
+        [calendarApp viewCalendarAt:MakeNSDateWithDate(day, [NSCalendar currentCalendar])];
     });
 }
 
@@ -419,7 +421,9 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     NSInteger i = 0;
 
     [optMenu insertItemWithTitle:NSLocalizedString(@"About Itsycal", @"") action:@selector(showAbout:) keyEquivalent:@"" atIndex:i++];
-    [optMenu insertItemWithTitle:NSLocalizedString(@"Check for Updates…", @"") action:@selector(checkForUpdates:) keyEquivalent:@"" atIndex:i++];
+    if (ItsycalHasUpdateFeed()) {
+        [optMenu insertItemWithTitle:NSLocalizedString(@"Check for Updates…", @"") action:@selector(checkForUpdates:) keyEquivalent:@"" atIndex:i++];
+    }
     [optMenu insertItem:[NSMenuItem separatorItem] atIndex:i++];
     [optMenu insertItemWithTitle:NSLocalizedString(@"Go to Date…", @"") action:@selector(showDatePickerPopover:) keyEquivalent:@"T" atIndex:i++];
     [optMenu insertItem:[NSMenuItem separatorItem] atIndex:i++];
@@ -454,6 +458,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
         PrefsAppearanceVC *prefsAppearanceVC = [PrefsAppearanceVC new];
         PrefsAboutVC *prefsAboutVC = [PrefsAboutVC new];
         prefsEventsVC.ec = _ec;
+        _prefsEventsVC = prefsEventsVC;
         prefsGeneralVC.title = NSLocalizedString(@"General", @"General prefs tab label");
         prefsEventsVC.title = NSLocalizedString(@"Events", @"Events prefs tab label");
         prefsAppearanceVC.title = NSLocalizedString(@"Appearance", @"Appearance prefs tab label");
@@ -1109,10 +1114,11 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
             [_moCal highlightCellsFromDate:dueDate toDate:dueDate withColor:info.reminder.calendar.color];
             return;
         }
-        MoDate startDate = MakeDateWithNSDate(info.event.startDate, _nsCal);
-        MoDate endDate   = MakeDateWithNSDate(info.event.endDate,   _nsCal);
+        NSCalendar *calendar = info.event.isAllDay ? [NSCalendar currentCalendar] : _nsCal;
+        MoDate startDate = MakeDateWithNSDate(info.event.startDate, calendar);
+        MoDate endDate   = MakeDateWithNSDate(info.event.endDate,   calendar);
         // Fixup for endDates that are at midnight
-        if ([info.event.endDate compare:[_nsCal startOfDayForDate:info.event.endDate]] == NSOrderedSame) {
+        if ([info.event.endDate compare:[calendar startOfDayForDate:info.event.endDate]] == NSOrderedSame) {
             endDate = AddDaysToDate(-1, endDate);
         }
         [_moCal highlightCellsFromDate:startDate toDate:endDate withColor:info.event.calendar.color];
@@ -1125,7 +1131,8 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     
     // Make a string showing the event title and duration.
     NSString *title = event.title == nil ? @"" : event.title;
-    NSString *duration = DateRangeString(event.startDate, event.endDate, event.isAllDay);
+    NSString *duration = DateRangeString(event.startDate, event.endDate, event.isAllDay,
+                                        event.isAllDay ? [NSTimeZone localTimeZone] : _nsCal.timeZone);
     NSString *eventString = [NSString stringWithFormat:@"%@\n%@", title, duration];
 
     BOOL eventRepeats = event.hasRecurrenceRules;
@@ -1305,6 +1312,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
 - (void)eventCenterEventsChanged
 {
     //os_log(OS_LOG_DEFAULT, "%s", __FUNCTION__);
+    [_prefsEventsVC reloadCalendars];
     _filteredEventsForDate = [_ec filteredEventsForDate];
     [_moCal reloadData];
     // Only the data changed. While the user is looking, keep their place.
@@ -1401,6 +1409,23 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     _moCal.selectedDate = today;
 }
 
+- (void)updateCalendarForTimeZone
+{
+    BOOL selectedToday = CompareDates(_moCal.selectedDate, _moCal.todayDate) == 0;
+    _nsCal = ItsycalCalendar();
+    _agendaVC.nsCal = _nsCal;
+    _tooltipVC.nsCal = _nsCal;
+    _iconDateFormatter.timeZone = _nsCal.timeZone;
+    _filteredEventsForDate = nil;
+    _moCal.todayDate = [self todayDate];
+    if (selectedToday) _moCal.selectedDate = _moCal.todayDate;
+    [_ec refetchAllWithCalendar:_nsCal];
+    [_moCal reloadData];
+    [self updateAgenda];
+    [self updateMenubarIcon];
+    [self updateTimer];
+}
+
 - (void)showMeetingIndicatorIfNecessary
 {
     BOOL show = NO;
@@ -1456,6 +1481,13 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
 - (void)updateTimer
 {
     NSDate *now = [NSDate date];
+    MoDate today = MakeDateWithNSDate(now, _nsCal);
+    if (CompareDates(today, _moCal.todayDate) != 0) {
+        MoDate selectedDate = _moCal.selectedDate;
+        [self resetCalendarToToday];
+        if (CompareDates(selectedDate, today) == 0) [self updateAgenda];
+        [self updateMenubarIcon];
+    }
     NSDateComponents *components = [_nsCal components:NSCalendarUnitEra | NSCalendarUnitYear | NSCalendarUnitMonth | NSCalendarUnitDay | NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond fromDate:now];
 
     // Should we beep-beep on the hour? If so, cap the volume relative to the
@@ -1600,15 +1632,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     token = [[NSNotificationCenter defaultCenter] addObserverForName:NSCalendarDayChangedNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        MoDate selectedDate = strongSelf->_moCal.selectedDate;
-        [strongSelf resetCalendarToToday];
-        [strongSelf updateMenubarIcon];
         [strongSelf updateTimer];
-        // Reminders due yesterday are now overdue. Changing the selected
-        // date rebuilds the agenda; if it didn't change, rebuild it here.
-        if (CompareDates(selectedDate, strongSelf->_moCal.selectedDate) == 0) {
-            [strongSelf updateAgenda];
-        }
     }];
     [_notificationTokens addObject:token];
 
@@ -1616,9 +1640,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     token = [[NSNotificationCenter defaultCenter] addObserverForName:NSSystemTimeZoneDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        [strongSelf updateMenubarIcon];
-        [strongSelf updateTimer];
-        [strongSelf->_ec refetchAll];
+        [strongSelf updateCalendarForTimeZone];
     }];
     [_notificationTokens addObject:token];
 
@@ -1626,9 +1648,7 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     token = [[NSNotificationCenter defaultCenter] addObserverForName:NSCurrentLocaleDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        [strongSelf updateMenubarIcon];
-        [strongSelf updateTimer];
-        [strongSelf updateAgenda]; // 12/24 hr time change in sys prefs
+        [strongSelf updateCalendarForTimeZone];
     }];
     [_notificationTokens addObject:token];
 
@@ -1682,6 +1702,9 @@ static NSArray<NSString *> *ObservedDefaultsKeys(void)
     }
     else if ([keyPath isEqualToString:kClockFormat]) {
         [self clockFormatDidChange];
+    }
+    else if ([keyPath isEqualToString:kTimeZoneIdentifier]) {
+        [self updateCalendarForTimeZone];
     }
     else if ([keyPath isEqualToString:kShowCompletedReminders]) {
         // Completed reminders are only fetched when shown.
